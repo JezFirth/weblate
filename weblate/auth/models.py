@@ -243,19 +243,8 @@ class UserManager(BaseUserManager["User"]):
             raise ValueError("The given username must be set")
         email = self.normalize_email(email)
         username = self.model.normalize_username(username)
-        
-        # get first_name and last_name
-        first_name = extra_fields.pop('first_name', None)
-        last_name = extra_fields.pop('last_name', None)
-        
         user = self.model(username=username, email=email, **extra_fields)
         user.set_password(password)
-        
-        #set full_name
-        if first_name or last_name:
-            full_name = f"{first_name or ''} {last_name or ''}".strip()
-            user.full_name = full_name
-        
         user.save(using=self._db)
         return user
 
@@ -270,24 +259,18 @@ class UserManager(BaseUserManager["User"]):
             raise ValueError("Superuser must have is_superuser=True.")
 
         return self._create_user(username, email, password, **extra_fields)
-    
-    def get_or_create(self, defaults=None, **kwargs):
-        defaults = defaults or {}
-        # exchange defaults first_name/ last_name
-        first_name = defaults.pop('first_name', None)
-        last_name = defaults.pop('last_name', None)
-        
-        #  get_or_create()
-        user, created = super().get_or_create(defaults=defaults, **kwargs)
-        
-        # if case handle full_name
-        if created and (first_name or last_name):
-            full_name = f"{first_name or ''} {last_name or ''}".strip()
-            user.full_name = full_name
-            user.save(using=self._db)
-        
-        return user, created
 
+    def get_or_create_bot(self, scope: str, username: str, verbose: str):
+        return self.get_or_create(
+            username=f"{scope}:{username}",
+            defaults={
+                "is_bot": True,
+                "full_name": verbose,
+                "email": f"noreply-{scope}-{username}@weblate.org",
+                "is_active": False,
+                "password": make_password(None),
+            },
+        )[0]
 
 
 class UserQuerySet(models.QuerySet["User"]):
@@ -567,19 +550,11 @@ class User(AbstractBaseUser):
         return self.full_name
 
     def __setattr__(self, name, value) -> None:
-    """Handle first_name and last_name attributes to update full_name."""
-    if name == 'first_name':
-        # Set first_name and update full_name
-        self.full_name = f"{value} {self.last_name}".strip()
-    elif name == 'last_name':
-        # Set last_name and update full_name
-        self.full_name = f"{self.first_name} {value}".strip()
-    elif name in self.DUMMY_FIELDS:
-        # Handling other virtual fields, such as is_staff
-        self.extra_data[name] = value
-    else:
-        super().__setattr__(name, value)
-
+        """Mimic first/last name for third-party auth and ignore is_staff flag."""
+        if name in self.DUMMY_FIELDS:
+            self.extra_data[name] = value
+        else:
+            super().__setattr__(name, value)
 
     def has_module_perms(self, module):
         """Compatibility API for admin interface."""
@@ -592,30 +567,13 @@ class User(AbstractBaseUser):
 
     @property
     def first_name(self) -> str:
-    """Get first name from full_name."""
-         if self.full_name:
-             return self.full_name.split(' ')[0]
-         return ''
-
-    @first_name.setter
-    def first_name(self, value: str) -> None:
-    """Set first name and update full_name."""
-         self.__setattr__('first_name', value)
-
+        """Compatibility API for third-party modules."""
+        return ""
 
     @property
-    def last_name(self) -> str:
-    """Get last name from full_name."""
-         if self.full_name:
-             parts = self.full_name.split(' ')
-             return ' '.join(parts[1:]) if len(parts) > 1 else ''
-         return ''
-
-    @last_name.setter
-    def last_name(self, value: str) -> None:
-     """Set last name and update full_name."""
-         self.__setattr__('last_name', value)
-
+    def last_name(self):
+        """Compatibility API for third-party modules."""
+        return self.full_name
 
     def has_perms(self, perm_list, obj=None) -> bool:
         return all(self.has_perm(perm, obj) for perm in perm_list)
